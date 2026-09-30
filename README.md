@@ -9,3 +9,7 @@ Machbarkeitstest: Läuft [DISTRHO Cardinal](https://github.com/DISTRHO/Cardinal)
 Inhalt: `probe/probe.c` (Prüfprogramm: dlopen, optional Instanz + 10-s-Benchmark),
 `check.sh` (Geräte-Infos, Bibliotheken-Abgleich, ruft das Prüfprogramm auf),
 Workflow `.github/workflows/cardinal-check.yml`.
+
+## Hinweis
+
+Entwickelt mit Unterstützung von Claude (Anthropic)
