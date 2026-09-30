@@ -18,11 +18,20 @@ jobs:
 
       - name: Cardinal armhf-Release laden
         run: |
-          echo "Verfügbare Dateien im Release:"
-          gh release view ${{ inputs.tag }} -R DISTRHO/Cardinal --json tagName,assets \
-            -q '"Tag: " + .tagName, (.assets[].name)'
+          echo "Neueste Cardinal-Releases (Tag, Vorabversion, Anzahl armhf-Dateien):"
+          gh api 'repos/DISTRHO/Cardinal/releases?per_page=15' \
+            -q '.[] | "\(.tag_name)  prerelease=\(.prerelease)  armhf=\([.assets[].name | select(test("linux-armhf"))] | length)"'
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            # neuestes Release, das tatsächlich eine armhf-Datei enthält (auch Vorabversionen)
+            TAG=$(gh api 'repos/DISTRHO/Cardinal/releases?per_page=30' \
+              -q '[.[] | select(.draft | not) | select([.assets[].name | select(test("linux-armhf"))] | length > 0)][0].tag_name')
+          fi
+          [ -n "$TAG" ] && [ "$TAG" != "null" ] || { echo "::error::kein Release mit armhf-Datei gefunden"; exit 1; }
+          echo "Verwende Release: $TAG"
           mkdir -p dl
-          gh release download ${{ inputs.tag }} -R DISTRHO/Cardinal -p '*linux-armhf*' -D dl
+          gh release download "$TAG" -R DISTRHO/Cardinal -p '*linux-armhf*' -D dl
+          ls -la dl
           cd dl
           for f in *; do tar xf "$f"; done
           echo "Enthaltene Plugin-Bündel:"
