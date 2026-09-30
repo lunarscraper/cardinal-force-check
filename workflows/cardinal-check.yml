@@ -1,0 +1,88 @@
+name: Cardinal-Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Cardinal-Release-Tag (leer = neuestes)
+        required: false
+        default: ''
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cardinal armhf-Release laden
+        run: |
+          echo "Verfügbare Dateien im Release:"
+          gh release view ${{ inputs.tag }} -R DISTRHO/Cardinal --json tagName,assets \
+            -q '"Tag: " + .tagName, (.assets[].name)'
+          mkdir -p dl
+          gh release download ${{ inputs.tag }} -R DISTRHO/Cardinal -p '*linux-armhf*' -D dl
+          cd dl
+          for f in *; do tar xf "$f"; done
+          echo "Enthaltene Plugin-Bündel:"
+          find . -maxdepth 3 \( -name '*.vst' -o -name '*.vst3' -o -name '*.lv2' -o -name '*.clap' \) | sort
+
+      - name: Synth-VST2 heraussuchen
+        run: |
+          mkdir -p out/cardinal-check/plugin
+          B=$(find dl -type d -name '*Synth*.vst' | head -n 1)
+          if [ -n "$B" ]; then
+            cp -a "$B" out/cardinal-check/plugin/
+          else
+            S=$(find dl -name '*Synth*.so' | grep -v -E '\.(lv2|vst3|clap)/' | head -n 1)
+            [ -n "$S" ] || { echo "::error::keine Synth-VST2 gefunden"; exit 1; }
+            cp -a "$S" out/cardinal-check/plugin/
+          fi
+          find out/cardinal-check/plugin | head -n 30
+          du -sh out/cardinal-check/plugin
+
+      - name: Abhängigkeiten analysieren
+        run: |
+          SO=$(find out/cardinal-check/plugin -name '*.so' | head -n 1)
+          A=out/cardinal-check/analysis.txt
+          {
+            echo "Datei: $(basename "$SO")"
+            file -b "$SO"
+            echo
+            echo "Benötigte Bibliotheken (NEEDED):"
+            readelf -d "$SO" | sed -n 's/.*Shared library: \[\(.*\)\]/  \1/p'
+            echo
+            echo "Höchste benötigte glibc:     $(readelf -V "$SO" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1) (Force: 2.39)"
+            echo "Höchste benötigte libstdc++: $(readelf -V "$SO" | grep -o 'GLIBCXX_[0-9.]*' | sort -uV | tail -n 1)"
+            echo "Exportiert VSTPluginMain:    $(readelf --dyn-syms -W "$SO" | grep -q ' VSTPluginMain' && echo ja || echo NEIN)"
+            echo
+            echo "Grafik-Abhängigkeiten (Hinweis auf nötigen Headless-Build):"
+            readelf -d "$SO" | grep -i -E 'GL|X11|Xext|Xrandr|Xcursor|wayland|EGL' | sed 's/^/  /' || echo "  keine"
+          } | tee "$A"
+          readelf -d "$SO" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' > out/cardinal-check/needed.txt
+
+      - name: Prüfprogramm für armhf bauen
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Kompilieren (arm32v7/gcc:12, glibc 2.36)
+        run: |
+          docker run --rm --platform linux/arm/v7 -v "$PWD":/w -w /w arm32v7/gcc:12 \
+            gcc -O2 -Wall -o out/cardinal-check/probe probe/probe.c -ldl -lm
+          cp check.sh ANLEITUNG.md out/cardinal-check/
+          file out/cardinal-check/probe
+
+      - name: Vortest unter QEMU (Debian armhf, nicht die Force)
+        continue-on-error: true
+        run: |
+          SO=$(find out/cardinal-check/plugin -name '*.so' | head -n 1)
+          docker run --rm --platform linux/arm/v7 -v "$PWD":/w -w /w arm32v7/gcc:12 \
+            ./out/cardinal-check/probe "$SO" | tee out/cardinal-check/ci-vortest.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cardinal-check
+          path: out/
+          retention-days: 14
